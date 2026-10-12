@@ -1,0 +1,59 @@
+pipeline {
+    agent any
+    environment {
+        IMAGE_NAME = "my-java-pro:${BUILD_NUMBER}"
+        SONAR_TOKEN = credentials('sonar-token') // your sqa_ token saved in Jenkins
+    }
+    stages {
+        // 1. Checkout
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/midhundugyala/my-java-pro.git'
+            }
+        }
+        // 2. Build & Test
+        stage('Build') {
+            steps {
+                sh 'mvn clean package -DskipTests=false'
+            }
+        }
+        // SonarQube Scan (from your previous step)
+        stage('SonarQube Scan') {
+            steps {
+                sh '''
+                read -rsp "SonarQube token: " SONAR_TOKEN
+                export SONAR_TOKEN
+                mvn sonar:sonar -Dsonar.host.url=http://localhost:9000 -Dsonar.token=$SONAR_TOKEN
+                '''
+            }
+        }
+        // Build Docker Image
+        stage('Docker Image') {
+            steps {
+                sh 'docker build -t $IMAGE_NAME .'
+            }
+        }
+        // 3. Trivy Scans
+        stage('Trivy Security Scans') {
+            steps {
+                sh '''
+                echo "=== Scan Image Vulnerabilities ==="
+                trivy image --severity HIGH,CRITICAL --exit-code 1 $IMAGE_NAME
+                
+                echo "=== Scan Dockerfile/IaC Misconfig ==="
+                trivy config --severity HIGH,CRITICAL .
+                '''
+            }
+        }
+        // 4. Security Gate
+        stage('Security Gate') {
+            steps {
+                script {
+                    // This will fail pipeline if HIGH/CRITICAL found
+                    sh 'trivy image --severity HIGH,CRITICAL --exit-code 1 $IMAGE_NAME || error("Security Gate Failed: HIGH/CRITICAL findings!")'
+                    echo 'Security Gate Passed - No HIGH/CRITICAL'
+                }
+            }
+        }
+    }
+}
